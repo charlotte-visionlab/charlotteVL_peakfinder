@@ -8,7 +8,7 @@ from torchsummary import summary
 from deep_peakfinder_model import ResNet1D, PeakDetectionNet, PeakDetectionXformNet
 from deep_peakfinder_loss import IoULoss, SparsePeakDetectionLoss, SparsePeakLoss
 from deep_peakfinder_csv2h5 import PeaksDataset
-
+from deep_peakfinder_utils import moving_average_filter_pytorch, moving_average_filter_numpy
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -84,17 +84,18 @@ def visualize_predictions_vs_ground_truth(batch_signal_fft_vals, predictions, gr
         plt.show()
 
 
+
 # Example usage
 if __name__ == "__main__":
     # Path to saved weights
     # saved_weights_path = "weights_peaks/model_2025-01-07_16-12-07_epoch_100.pth"
     # saved_weights_path = "weights_peaks/model_2025-01-09_02-50-16_epoch_100.pth"
-    saved_weights_path = "weights_peaks/model_2025-01-10_12-24-09_epoch_810.pth"
-    dataset_filename = "/home/arwillis/AF241/af241_deep_doa/IQ-2.h5"
-    # dataset_filename = "/home/arwillis/AF241/af241_deep_doa/IQ_synthetic_v01.h5"
+    saved_weights_path = "weights_peaks/model_2025-01-13_16-00-15_epoch_135.pth"
+    # dataset_filename = "IQ-2_shifted.h5"
+    dataset_filename = "IQ_synthetic_v03.h5"
     batch_size = 1
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = 'cpu'
+    # device = 'cpu'
     peakfinder_dataset = PeaksDataset(dataset_filename)
     data_loader = DataLoader(peakfinder_dataset, batch_size=batch_size, shuffle=False)
 
@@ -119,7 +120,8 @@ if __name__ == "__main__":
 
     model = PeakDetectionXformNet(input_channels=2, output_length=400, num_classes=1)
     # loss_function = nn.BCELoss(weight=torch.tensor(197.0/3.0)).to(device)  # For binary classification
-    loss_function = SparsePeakDetectionLoss().to(device)
+    loss_function = SparsePeakDetectionLoss(alpha=1.0, gamma=2.0).to(device)
+
     print(model)
     # Load saved weights
     model.load_state_dict(torch.load(saved_weights_path, weights_only=True, map_location=torch.device(device)))
@@ -130,6 +132,7 @@ if __name__ == "__main__":
     model.to(device)
     summary(model, input_size=input_shape)
 
+    N = 5
     # loss_function = nn.MSELoss().to(device)
     # loss_function = SparsePeakDetectionLoss().to(device)
     # Perform inference
@@ -138,13 +141,16 @@ if __name__ == "__main__":
             batch_signal_fft_vals, batch_peak_true_vals = batch_data
             batch_signal_fft_vals = torch.abs(batch_signal_fft_vals)
             batch_signal_fft_vals = batch_signal_fft_vals / torch.max(batch_signal_fft_vals)
+            # smoothed_batch_signal_fft_vals = moving_average_filter_numpy(batch_signal_fft_vals, N).astype(np.float32)
+            # batch_signal_fft_vals = torch.tensor(smoothed_batch_signal_fft_vals)
+            smoothed_batch_signal_fft_vals = moving_average_filter_pytorch(batch_signal_fft_vals, N)
+            batch_signal_fft_vals = smoothed_batch_signal_fft_vals
             input_data = batch_signal_fft_vals.to(device)
             ground_truth = batch_peak_true_vals.to(device)
             batch_y_pred = model(input_data)
             predicted_classes = torch.sigmoid(batch_y_pred)  # Convert logits to probabilities
             predicted_classes = (predicted_classes > 0.5).float()  # Threshold probabilities to binary
             # predicted_classes = torch.round(batch_y_pred[:,1,:]).unsqueeze(1)
-
             loss = loss_function(batch_y_pred, ground_truth)
             # Display the predictions, ground truth, and losses
             # display_predictions_vs_ground_truth(predictions, ground_truth, loss_function, verbose=False)

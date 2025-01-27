@@ -54,10 +54,10 @@ def create_dataloaders(dataset, train_ratio=0.7, val_ratio=0.2, test_ratio=0.1, 
 
 if __name__ == "__main__":
     # dataset_filename = "/home/arwillis/AF241/af241_deep_doa/IQ-2.h5"
-    dataset_filename = "/home/arwillis/AF241/af241_deep_doa/IQ_synthetic_v02.h5"
+    dataset_filename = "IQ_synthetic_v04.h5"
 
-    batch_size = 5000  # 65535 ==> 1128 MB GPU memory
-    num_epochs = 1000
+    batch_size = 20000  # 65535 ==> 1128 MB GPU memory
+    num_epochs = 2000
 
     # Hyperparameters to tune
     learning_rate = 1.0e-3
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     log_dir = "runs_peaks"
     save_dir = "weights_peaks"
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = "cuda" if torch.cuda.is_available() else 'cpu'
     # device = 'cpu'
     correlation_matrix_dataset = PeaksDataset(dataset_filename)
 
@@ -98,11 +98,11 @@ if __name__ == "__main__":
     log_dir = f"runs_peaks/training_logs_{current_time}"
     os.makedirs(save_dir, exist_ok=True)
 
-    input_size = (2, 400)
+    input_size = (6, 400)
 
     # Example Configuration
     block_configs = [
-        {"in_channels": 2, "out_channels": 64, "kernel_size": 5, "stride": 1},
+        {"in_channels": 6, "out_channels": 64, "kernel_size": 5, "stride": 1},
         {"in_channels": 64, "out_channels": 256, "kernel_size": 3, "stride": 1},
         {"in_channels": 256, "out_channels": 512, "kernel_size": 3, "stride": 1},
         {"in_channels": 512, "out_channels": 1024, "kernel_size": 3, "stride": 1},
@@ -116,11 +116,14 @@ if __name__ == "__main__":
     # loss_function = nn.MSELoss().to(device)
 
     # model = PeakDetectionNet()
-    model = PeakDetectionXformNet(input_channels=2, output_length=400, num_classes=1)
+    model = PeakDetectionXformNet(input_channels=6, output_length=400, num_classes=1)
+    # model = nn.DataParallel(model)
     # loss_function = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 400.0])) .to(device) # Higher weight for class 1
     # 01-09_19_33
-    loss_function = SparsePeakDetectionLoss().to(device)
-    # loss_function = WeightedIoULoss(pos_weight=390.0,neg_weight=1.0).to(device)
+    # loss_function = SparsePeakDetectionLoss(alpha=1.0, gamma=2.0).to(device)
+    # loss_function = SparsePeakLoss().to(device)
+    loss_function = WeightedIoULoss(pos_weight=390.0,neg_weight=1.0).to(device)
+    # loss_function = IoULoss().to(device)
     # loss_function = nn.BCELoss(weight=torch.tensor(394.0 / 6.0)).to(device)  # For binary classification
     # loss_function = nn.MSELoss().to(device)
 
@@ -134,6 +137,7 @@ if __name__ == "__main__":
         "PeakResNet1D": {
             "iteration loss": ["Multiline", ["loss/train", "loss/validation"]],
             "epoch loss": ["Multiline", ["epoch loss/train", "epoch loss/validation"]],
+            "learning rate": ["Multiline", ["learning rate/lr"]]
             # "accuracy": ["Multiline", ["accuracy/train", "accuracy/validation"]],
         },
     }
@@ -178,6 +182,7 @@ if __name__ == "__main__":
             # mrpd = compute_mprd(outputs, batch_y)
             # Log batch metrics to TensorBoard
             writer.add_scalar("loss/train", train_loss, global_train_batch_index)
+            writer.add_scalar("learning rate/lr", optimizer.param_groups[0]["lr"], global_train_batch_index)
             # F1 Score
             # batch_y_pred = batch_y_pred.detach().cpu().numpy()
             # batch_y_true = batch_y_true.detach().cpu().numpy()

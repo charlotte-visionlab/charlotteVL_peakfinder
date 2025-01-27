@@ -5,7 +5,7 @@ from scipy.signal import find_peaks
 import torch
 from torch.utils.data import Dataset, DataLoader
 import h5py
-
+from deep_peakfinder_utils import moving_average_filter_numpy
 
 class PeaksDataset(Dataset):
     def __init__(self, h5_file):
@@ -43,7 +43,8 @@ class PeaksDataset(Dataset):
 
 
 def create_peaks_dataset(inputfile, outputfile, num_samples=400, num_peaks=3):
-    with (h5py.File(outputfile, "w") as hdf):
+    # with (h5py.File(outputfile, "w") as hdf):
+    with h5py.File(outputfile, "w") as hdf:
         signal_fft_dataset = hdf.create_dataset("signal_fft",
                                                 shape=(0, 2, num_samples),
                                                 maxshape=(None, 2, num_samples), dtype='float32')
@@ -54,7 +55,7 @@ def create_peaks_dataset(inputfile, outputfile, num_samples=400, num_peaks=3):
                                                             shape=(0, 1, num_samples),
                                                             maxshape=(None, 1, num_samples), dtype='int32')
 
-        with open('IQ-2.csv', 'r') as file:
+        with open(inputfile, 'r') as file:
             reader = csv.reader(file, delimiter=' ')
             rows = []
             for row in reader:
@@ -72,7 +73,7 @@ def create_peaks_dataset(inputfile, outputfile, num_samples=400, num_peaks=3):
                 down_ramp = i_down_ramp + 1j * q_down_ramp
                 signal = np.concatenate((up_ramp, down_ramp))
                 signal -= np.mean(signal)
-                signal_fft = np.fft.fft(signal)
+                signal_fft = np.fft.fftshift(np.fft.fft(signal))
                 signal_fft_real = np.real(signal_fft)
                 signal_fft_imag = np.imag(signal_fft)
 
@@ -105,7 +106,7 @@ def create_peaks_dataset(inputfile, outputfile, num_samples=400, num_peaks=3):
 
 
 def generate_peak_vector(vector_length=400, num_peaks=1, min_base_width=5, max_base_width=20, min_height=0.5,
-                         max_height=1.0, min_spacing=5, noise_floor=0.3):
+                         max_height=1.0, min_spacing=5, noise_floor=0.3, verbose=False):
     """
     Generates a 400-element vector with triangular peaks, ensuring no peaks overlap or occur within `min_spacing` indices.
 
@@ -150,19 +151,19 @@ def generate_peak_vector(vector_length=400, num_peaks=1, min_base_width=5, max_b
                     # labels[i] = 1  # Mark as a peak location
                     if np.abs(peak_center - i) <= min_spacing:
                         occupied_indices.add(i)  # Mark indices as occupied
-                labels[peak_center] = 1  # Mark as a peak location
-                if vector[peak_center] < 0.3:
+                labels[peak_center] = 1.0  # Mark as a peak location
+                if vector[peak_center] < 0.3 and verbose:
                     print(f"low peak @ {peak_center} height = {height} (min,max)=({min_height},{max_height})")
                 break  # Move to the next peak
             attempts += 1
 
-        if attempts == 100:
+        if attempts == 100 and verbose:
             print("Could not place all peaks due to spacing constraints.")
 
     return vector, labels
 
 
-def generate_dataset(outputfile, num_samples=1000, show=False, **kwargs):
+def generate_dataset(outputfile, num_samples=1000, show=False, verbose=False, **kwargs):
     """
     Generates a dataset of 400-element vectors with triangular peaks.
 
@@ -180,7 +181,7 @@ def generate_dataset(outputfile, num_samples=1000, show=False, **kwargs):
         "vector_length": 400,
         "num_peaks": 25,
         "min_base_width": 5,
-        "max_base_width": 20,
+        "max_base_width": 30,
         "min_height": 0.5,
         "max_height": 1.0,
         "min_spacing": 3,
@@ -188,10 +189,11 @@ def generate_dataset(outputfile, num_samples=1000, show=False, **kwargs):
     }
     # print(peak_generation_config)
 
-    with (h5py.File(outputfile, "w") as hdf):
+    # with (h5py.File(outputfile, "w") as hdf):
+    with h5py.File(outputfile, "w") as hdf:
         signal_fft_dataset = hdf.create_dataset("signal_fft",
-                                                shape=(0, 2, peak_generation_config["vector_length"]),
-                                                maxshape=(None, 2, peak_generation_config["vector_length"]),
+                                                shape=(0, 6, peak_generation_config["vector_length"]),
+                                                maxshape=(None, 6, peak_generation_config["vector_length"]),
                                                 dtype='float32')
         # peaks_true_index_list_dataset = hdf.create_dataset('peaks_true_index_list',
         #                                                    shape=(0,),
@@ -200,22 +202,100 @@ def generate_dataset(outputfile, num_samples=1000, show=False, **kwargs):
                                                             shape=(0, 1, peak_generation_config["vector_length"]),
                                                             maxshape=(None, 1, peak_generation_config["vector_length"]),
                                                             dtype='int32')
-        for _ in range(num_samples):
+        for sample_index in range(num_samples):
+            if sample_index % 10000 == 0:
+                print(f"Generating sample {sample_index} of {num_samples}...")
             peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
             peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
                                                                                                              high=0.2)
             peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
             peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=6))
-            vector, peaks_true_mask = generate_peak_vector(**peak_generation_config)
-            scale_factor = np.random.uniform(low=0.3, high=0.6, size=400)
-            signal_fft_real = scale_factor * vector
-            signal_fft_imag = (1 - scale_factor) * vector
+            i_vector, i_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            n_1_vector = i_vector
 
-            true_peak_indices = np.where(peaks_true_mask)[0]
+            # peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
+            # peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
+            #                                                                                                  high=0.2)
+            # peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
+            # peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=6))
+            # i3_vector, i3_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            # n_3_vector = moving_average_filter_numpy(i3_vector.reshape((1,1,400)), 3)
+
+            # peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
+            # peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
+            #                                                                                                  high=0.2)
+            # peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
+            # peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=6))
+            # i5_vector, i5_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            # n_5_vector = moving_average_filter_numpy(i5_vector.reshape((1,1,400)), 5)
+
+            # peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
+            # peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
+            #                                                                                                  high=0.2)
+            # peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
+            # peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=6))
+            # i7_vector, i7_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            # n_7_vector = moving_average_filter_numpy(i7_vector.reshape((1,1,400)), 7)
+
+            # peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
+            # peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
+            #                                                                                                  high=0.2)
+            # peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
+            # peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=6))
+            # i9_vector, i9_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            # n_9_vector = moving_average_filter_numpy(i9_vector.reshape((1,1,400)), 9)
+
+            # peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
+            # peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
+            #                                                                                                  high=0.2)
+            # peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
+            # peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=6))
+            # i11_vector, i11_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            # n_11_vector = moving_average_filter_numpy(i11_vector.reshape((1,1,400)), 11)
+
+            n_3_vector = moving_average_filter_numpy(i_vector.copy().reshape((1,1,400)), 3)
+            n_5_vector = moving_average_filter_numpy(i_vector.copy().reshape((1,1,400)), 5)
+            n_7_vector = moving_average_filter_numpy(i_vector.copy().reshape((1,1,400)), 7)
+            n_9_vector = moving_average_filter_numpy(i_vector.copy().reshape((1,1,400)), 9)
+            n_11_vector = moving_average_filter_numpy(i_vector.copy().reshape((1,1,400)), 11)
+
+            n_3_vector = n_3_vector.reshape((-1))
+            n_5_vector = n_5_vector.reshape((-1))
+            n_7_vector = n_7_vector.reshape((-1))
+            n_9_vector = n_9_vector.reshape((-1))
+            n_11_vector = n_11_vector.reshape((-1))
+            # peak_generation_config["min_height"] = np.random.uniform(low=0.15, high=0.3)
+            # peak_generation_config["noise_floor"] = peak_generation_config["min_height"] * np.random.uniform(low=0.1,
+            #                                                                                                  high=0.2)
+            # moving_average_filter_numpy(data, N)
+            # peak_generation_config["num_peaks"] = int(np.random.uniform(low=2, high=18))
+            # peak_generation_config["min_spacing"] = int(np.random.uniform(low=3, high=5))
+            # q_vector, q_peaks_true_mask = generate_peak_vector(**peak_generation_config)
+            # peaks_true_mask = i_peaks_true_mask + q_peaks_true_mask
+            peaks_true_mask = i_peaks_true_mask # + i3_peaks_true_mask + i5_peaks_true_mask + i7_peaks_true_mask + i9_peaks_true_mask + i11_peaks_true_mask
+            peaks_true_mask = np.clip(peaks_true_mask, a_min=None, a_max=1)
+            # # peaks_true_mask =
+            # # scale_factor = np.random.uniform(low=0.3, high=0.6, size=400)
+            # scale_factor = 1.0
+            # signal_fft_real = scale_factor * i_vector
+            # signal_fft_imag = (1 - scale_factor) * q_vector
+
+            i_true_peak_indices = np.where(i_peaks_true_mask)[0]
+            # q_true_peak_indices = np.where(q_peaks_true_mask)[0]
             if show:
                 # Plot data on each subplot
-                plt.plot(np.arange(400), vector, 'r--')
-                plt.plot(true_peak_indices, vector[true_peak_indices], 'bo')
+                plt.plot(np.arange(400), n_1_vector, 'r--')
+                plt.plot(np.arange(400), n_3_vector, 'b--')
+                plt.plot(np.arange(400), n_5_vector, 'g--')
+                plt.plot(np.arange(400), n_7_vector, 'c--')
+                plt.plot(np.arange(400), n_9_vector, 'm--')
+                plt.plot(np.arange(400), n_11_vector, 'k--')
+                plt.plot(i_true_peak_indices, i_vector[i_true_peak_indices], 'r*')
+                plt.title("Example of Peak Vector Sample")
+                # plt.plot(np.arange(400), i_vector, 'r--')
+                # plt.plot(i_true_peak_indices, i_vector[i_true_peak_indices], 'r*')
+                # plt.plot(np.arange(400), q_vector, 'b--')
+                # plt.plot(q_true_peak_indices, q_vector[q_true_peak_indices], 'bo')
                 plt.show()
             num_records = signal_fft_dataset.shape[0] + 1
             new_signal_shape = (signal_fft_dataset.shape[0] + 1,) + signal_fft_dataset.shape[1:]
@@ -223,11 +303,13 @@ def generate_dataset(outputfile, num_samples=1000, show=False, **kwargs):
             #                              0] + 1,) + peaks_true_index_list_dataset.shape[1:]
             new_peaks_mask_shape = (peaks_true_binary_mask_dataset.shape[
                                         0] + 1,) + peaks_true_binary_mask_dataset.shape[1:]
-            print(f"Expanding the dataset to {num_records} elements: " +
-                  f"signal_fft.shape = {new_signal_shape} " +
-                  # f"peaks_true_index_list.shape = {new_peaks_index_shape} " +
-                  f"peaks_true_binary_mask_dataset.shape = {new_peaks_mask_shape} ")
-            channelized_signal = torch.tensor(np.stack((signal_fft_real, signal_fft_imag)))
+            if verbose:
+                print(f"Expanding the dataset to {num_records} elements: " +
+                      f"signal_fft.shape = {new_signal_shape} " +
+                      # f"peaks_true_index_list.shape = {new_peaks_index_shape} " +
+                      f"peaks_true_binary_mask_dataset.shape = {new_peaks_mask_shape} ")
+            # channelized_signal = torch.tensor(np.stack((signal_fft_real, signal_fft_imag)))
+            channelized_signal = torch.tensor(np.stack((n_1_vector, n_3_vector, n_5_vector, n_7_vector, n_9_vector, n_11_vector)))
             signal_fft_dataset.resize(new_signal_shape)
             signal_fft_dataset[-1:] = channelized_signal
 
@@ -243,14 +325,14 @@ def generate_dataset(outputfile, num_samples=1000, show=False, **kwargs):
 
 
 if __name__ == "__main__":
-    outputfile = 'IQ_synthetic_v03.h5'
+    outputfile = 'IQ_synthetic_v04.h5'
     show = True
-    num_samples = 100000
+    num_samples = 250000
     generate_dataset(outputfile, num_samples, show=show)
     if True:
         exit()
     num_peaks = 2
-    create_peaks_dataset('IQ-2.csv', 'IQ-2.h5', num_samples=400, num_peaks=num_peaks)
+    create_peaks_dataset('IQ-2.csv', 'IQ-2_shifted.h5', num_samples=400, num_peaks=num_peaks)
 
     with open('IQ-2.csv', 'r') as file:
         reader = csv.reader(file, delimiter=' ')

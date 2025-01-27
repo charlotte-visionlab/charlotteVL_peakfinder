@@ -44,10 +44,10 @@ class SparsePeakDetectionLoss(nn.Module):
         focal_loss = self.focal_loss(outputs, targets)
 
         # Sparsity penalty to encourage sparse predictions
-        sparsity_loss = torch.mean(torch.abs(outputs))
+        #sparsity_loss = torch.mean(torch.abs(outputs))
 
         # Total loss
-        total_loss = focal_loss + self.sparsity_weight * sparsity_loss
+        total_loss = focal_loss # + self.sparsity_weight * sparsity_loss
         return total_loss
 
 
@@ -71,8 +71,8 @@ class IoULoss(nn.Module):
         # predictions = (predictions > 0.5).float()  # Threshold probabilities to binary
 
         # Compute intersection and union
-        intersection = torch.sum(predictions * targets, dim=1)
-        union = torch.sum(predictions + targets, dim=1) - intersection
+        intersection = torch.sum(predictions * targets, dim=2)
+        union = torch.sum(predictions + targets, dim=2) - intersection
 
         # Compute IoU
         iou = intersection / (union + 1e-8)  # Add epsilon to avoid division by zero
@@ -113,8 +113,8 @@ class WeightedIoULoss(nn.Module):
         weights = targets * self.pos_weight + (1 - targets) * self.neg_weight
 
         # Compute weighted intersection and union
-        intersection = torch.sum(weights * predictions * targets, dim=1)
-        union = torch.sum(weights * (predictions + targets) - weights * predictions * targets, dim=1)
+        intersection = torch.sum(weights * predictions * targets, dim=2)
+        union = torch.sum(weights * (predictions + targets) - weights * predictions * targets, dim=2)
 
         # Compute IoU
         iou = intersection / (union + 1e-8)  # Add epsilon to prevent division by zero

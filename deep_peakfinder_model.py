@@ -1,19 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchviz import make_dot
-
-# create some sample input data
-# x = torch.randn(1, 3, 256, 256)
-
-# generate predictions for the sample data
-# y = MyPyTorchModel()(x)
-
-# generate a model architecture visualization
-# make_dot(y.mean(),
-#          params=dict(MyPyTorchModel().named_parameters()),
-#          show_attrs=True,
-#          show_saved=True).render("MyPyTorchModel_torchviz", format="png")
 
 class ResidualBlock1D(nn.Module):
     """
