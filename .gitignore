@@ -169,3 +169,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+uRAD_to_depth_image/datasets/
+uRAD_to_depth_image/runs_peaks/
+uRAD_to_depth_image/weights_depths/
+*.h5
