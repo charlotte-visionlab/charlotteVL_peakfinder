@@ -5,6 +5,8 @@ import os
 import torch
 import h5py
 import scipy
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 Fs = 200000
 Fs_CW = 25000
@@ -123,8 +125,10 @@ def get_dataset_images_depth_values(images, folder_path):
     mean_depth = 0
     mean_Q = np.array([0,0,0])
 
-    for idx in range(len(images)):
+    for idx in tqdm(range(len(images))):
         depth_I = cv2.imread(folder_path + "/" + images[idx], cv2.IMREAD_UNCHANGED)
+        # print(folder_path + "/" + images[idx])
+        # print(depth_I)
         depth_I = depth_I[:,25:]
         mean_depth = mean_depth + np.mean(depth_I)
         max_depth = np.max([max_depth, np.max(depth_I)])
@@ -140,16 +144,40 @@ def get_dataset_images_depth_values(images, folder_path):
 
     return max_depth, mean_depth, mean_Q
 
-def create_h5_dataset(I, Q, sync_idx, images, output_file, folder_path):
-    with h5py.File(output_file, "w") as hdf:
-        signal_fft_dataset = hdf.create_dataset("signal_fft",
-                                                shape=(0,15, 500),
-                                                maxshape=(None, 15, 500),
+def check_depth_image(images, sync_idx, folder_path):
+    # depth_max, depth_mean, depth_Qrange = get_dataset_images_depth_values(images, folder_path)
+    filter_size = 7
+    filter = np.ones((filter_size, filter_size)) / (filter_size**2)
+    for idx in np.arange(7, len(I)-7):
+        # print(folder_path + "/" + images[int(sync_idx[idx,2])])
+        depth_I = cv2.imread(folder_path + "/" + images[int(sync_idx[idx,2])], cv2.IMREAD_UNCHANGED)
+        # print(depth_I)
+        depth_I = depth_I[:,25:]
+        # depth_I[depth_I < depth_Qrange[0]*0.5] = 2200.0
+        # depth_I[depth_I > depth_Qrange[2]] = 2200.0
+        # depth_I = scipy.signal.convolve2d(depth_I, filter, mode="same")
+        depth_I = depth_I / depth_I.max()
+        snippet = depth_I[31:95, 51:115]
+        
+        plt.subplot(1,2,1)
+        plt.imshow(depth_I)
+        plt.xlabel("Original")
+        plt.subplot(1,2,2)
+        plt.imshow(snippet)
+        plt.xlabel("Snippet")
+        plt.show()
+
+def create_h5_dataset(I, Q, sync_idx, images, output_file, folder_path, start):
+    with h5py.File(output_file, "a") as hdf:
+        if start == True:
+            signal_fft_dataset = hdf.create_dataset("signal_fft",
+                                                    shape=(0,15, 500),
+                                                    maxshape=(None, 15, 500),
+                                                    dtype='float32')
+            images_dataset = hdf.create_dataset("images",
+                                                shape=(0, 64, 64),
+                                                maxshape=(None, 64, 64),
                                                 dtype='float32')
-        images_dataset = hdf.create_dataset("images",
-                                            shape=(0, 64, 64),
-                                            maxshape=(None, 64, 64),
-                                            dtype='float32')
         
         fft_max, fft_min = get_dataset_fft_max_min(I, Q)
         depth_max, depth_mean, depth_Qrange = get_dataset_images_depth_values(images, folder_path)
@@ -157,11 +185,13 @@ def create_h5_dataset(I, Q, sync_idx, images, output_file, folder_path):
         filter_size = 7
         filter = np.ones((filter_size, filter_size)) / (filter_size**2)
 
-        for idx in np.arange(7, len(I)-7):
+        # for idx in np.arange(7, len(I)-7):
+        for idx in np.arange(11, len(I)-11):
             fft_holder = torch.zeros((15,500))
             fft_counter = 0
             start = int(N_FFT/2)
-            for fft_idx in np.arange(idx-7, idx+8):
+            # for fft_idx in np.arange(idx-7, idx+8):
+            for fft_idx in [idx-11, idx-9, idx-8, idx-6, idx-5, idx-3, idx-2, idx, idx+1, idx+3, idx+4, idx+6, idx+7, idx+9, idx+10]:
                 temp_fft = convert_IQ_to_FFT(I[fft_idx,:], Q[fft_idx,:])
                 temp_fft = torch.from_numpy(temp_fft)
                 fft_holder[fft_counter,:] = (temp_fft[start:start+500] - fft_min) / (fft_max - fft_min)
@@ -175,37 +205,62 @@ def create_h5_dataset(I, Q, sync_idx, images, output_file, folder_path):
             depth_I = depth_I / depth_max
             depth_I = depth_I[31:95, 51:115]
             
-            num_records = signal_fft_dataset.shape[0] + 1
-            new_signal_shape = (signal_fft_dataset.shape[0] + 1,) + signal_fft_dataset.shape[1:]
-            new_image_shape = (images_dataset.shape[0] + 1,) + images_dataset.shape[1:]
+            if start == True:
+                num_records = signal_fft_dataset.shape[0] + 1
+                new_signal_shape = (signal_fft_dataset.shape[0] + 1,) + signal_fft_dataset.shape[1:]
+                new_image_shape = (images_dataset.shape[0] + 1,) + images_dataset.shape[1:]
 
-            print(f"Expanding the dataset to {num_records} elements: " + 
-                  f"signal_fft.shape = {new_signal_shape} " +
-                  f"images.shape = {new_image_shape} ")
+                print(f"Expanding the dataset to {num_records} elements: " + 
+                f"signal_fft.shape = {new_signal_shape} " +
+                f"images.shape = {new_image_shape} ")
             
-            signal_fft_dataset.resize(new_signal_shape)
-            signal_fft_dataset[-1:] = fft_holder
+                signal_fft_dataset.resize(new_signal_shape)
+                signal_fft_dataset[-1:] = fft_holder
 
-            images_dataset.resize(new_image_shape)
-            images_dataset[-1:] = torch.from_numpy(depth_I)
+                images_dataset.resize(new_image_shape)
+                images_dataset[-1:] = torch.from_numpy(depth_I)
+            else:
+                num_records = hdf["signal_fft"].shape[0] + 1
+                new_signal_shape = (hdf["signal_fft"].shape[0] + 1,) + hdf["signal_fft"].shape[1:]
+                new_image_shape = (hdf["images"].shape[0] + 1,) + hdf["images"].shape[1:]
+
+                print(f"Expanding the dataset to {num_records} elements: " + 
+                f"signal_fft.shape = {new_signal_shape} " +
+                f"images.shape = {new_image_shape} ")
+            
+                hdf["signal_fft"].resize(new_signal_shape)
+                hdf["signal_fft"][-1:] = fft_holder
+
+                hdf["images"].resize(new_image_shape)
+                hdf["images"][-1:] = torch.from_numpy(depth_I)
+
+            
 
 if __name__ == "__main__":
-    folder_name = "02-07-2025_15-06-16-737244"
-    folder_path = "./datasets/"+folder_name
-    output_file = folder_name+".h5"
+    folder_names = ["02-05-2025_15-18-32-003539", "02-05-2025_16-17-48-719931", "02-07-2025_10-34-15-586727", "02-07-2025_11-03-23-147284", "02-07-2025_11-16-03-585918", "02-07-2025_11-29-43-359675", "02-07-2025_11-53-49-554597", "02-07-2025_13-04-56-680734", "02-07-2025_13-20-12-624401", "02-07-2025_13-36-06-814749", "02-07-2025_15-20-45-566250", "02-07-2025_15-35-54-028218"]
+    # folder_names = ["02-07-2025_15-06-16-737244"]
+    start = True
+    for folder_name in folder_names:
+        folder_path = "./datasets/"+folder_name
+        # output_file = folder_name+".h5"
+        output_file = "training_dataset.h5"
+        # output_file = "test_dataset.h5"
 
-    I = pd.read_csv(folder_path+"/I.csv", header=None)
-    I = I.to_numpy()
-    I = I[:,1:]
-    # print(len(I))
-    Q = pd.read_csv(folder_path+"/Q.csv", header=None)
-    Q = Q.to_numpy()
-    Q = Q[:,1:]
+        I = pd.read_csv(folder_path+"/I.csv", header=None)
+        I = I.to_numpy()
+        I = I[:,1:]
+        # print(len(I))
+        Q = pd.read_csv(folder_path+"/Q.csv", header=None)
+        Q = Q.to_numpy()
+        Q = Q[:,1:]
 
-    sync_idx = pd.read_csv(folder_path+"/synced/synced_idx.csv", header=None)
-    sync_idx = sync_idx.to_numpy()
+        sync_idx = pd.read_csv(folder_path+"/synced/synced_idx.csv", header=None)
+        sync_idx = sync_idx.to_numpy()
 
-    images_folder_path = folder_path+"/images/depth/"
-    images = os.listdir(images_folder_path)
+        images_folder_path = folder_path+"/images/depth/"
+        images = os.listdir(images_folder_path)
 
-    create_h5_dataset(I, Q, sync_idx, images, output_file, images_folder_path)
+        create_h5_dataset(I, Q, sync_idx, images, output_file, images_folder_path, start)
+        if start:
+            start = False
+        # check_depth_image(images, sync_idx, images_folder_path)
