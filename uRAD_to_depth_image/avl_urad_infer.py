@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from torchsummary import summary
 from scipy.signal import find_peaks
 
-from avl_models import SignalToImageCNN
+from avl_models import SignalToImageCNN, ResNetSignalToImage, XformNetSignalToImage
 from avl_urad_create_h5 import DepthDataset
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -32,8 +32,13 @@ def visualize_predictions_vs_ground_truth(batch_signal_fft_vals, predictions, gr
 # Example usage
 if __name__ == "__main__":
     # Path to saved weights
-    saved_weights_path = "weights_depths/model_2025-02-18_23-19-44_epoch_795.pth"
-    dataset_filename = "02-07-2025_15-06-16-737244.h5"
+    # saved_weights_path = "weights_depths/model_2025-03-05_12-53-11_final.pth"
+    # saved_weights_path = "weights_depths/model_2025-03-10_17-50-40_final.pth"
+    # dataset_filename = "02-07-2025_15-06-16-737244.h5"
+
+    saved_weights_path = "weights_depths/model_2025-04-16_12-40-20_final.pth"
+    dataset_filename = "test_dataset.h5"
+
     batch_size = 1
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = 'cpu'
@@ -44,7 +49,8 @@ if __name__ == "__main__":
     # Instantiate model, optimizer, and loss function
     input_shape = (15, 500)
     
-    model = SignalToImageCNN()
+    model = ResNetSignalToImage()
+    # model = XformNetSignalToImage()
     loss_function = nn.MSELoss()
 
     print(model)

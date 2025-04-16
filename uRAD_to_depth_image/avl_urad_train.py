@@ -5,12 +5,27 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
+from torchvision.transforms import v2
 from torchsummary import summary
 import os
 
-from avl_models import SignalToImageCNN
+from avl_models import SignalToImageCNN, ComplexSignalToImageCNN, ResNetSignalToImage, XformNetSignalToImage
 from avl_urad_create_h5 import DepthDataset
 from sklearn.metrics import f1_score
+from ssim import SSIM, ssim
+
+def ssim_loss(X,Y):
+    loss_func = SSIM(data_range=1., channel=1)
+    return 1 - loss_func(X,Y)
+
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.8):
+        super(CombinedLoss, self).__init__()
+        self.ssim = ssim_loss
+        self.l1 = nn.SmoothL1Loss()
+        self.alpha = alpha
+    def forward(self, img1, img2):
+        return self.alpha * self.ssim(img1, img2) + (1 - self.alpha) * self.l1(img1, img2)
 
 def create_dataloaders(dataset, train_ratio=0.7, val_ratio=0.2, test_ratio=0.1, batch_size=32, shuffle=True):
     """
@@ -51,10 +66,12 @@ def create_dataloaders(dataset, train_ratio=0.7, val_ratio=0.2, test_ratio=0.1, 
 
 
 if __name__ == "__main__":
-    dataset_filename = "02-07-2025_15-06-16-737244.h5"
+    # dataset_filename = "02-07-2025_15-06-16-737244.h5"
+    # dataset_filename = "training_dataset.h5"
+    dataset_filename = "test_dataset.h5"
 
-    batch_size = 64  # 65535 ==> 1128 MB GPU memory
-    num_epochs = 2000
+    batch_size = 64 #5096  # 5096 ==> 13898 MB GPU memory
+    num_epochs = 100
 
     # Hyperparameters to tune
     learning_rate = 1.0e-3
@@ -83,13 +100,19 @@ if __name__ == "__main__":
     log_dir = f"runs_peaks/training_logs_{current_time}"
     os.makedirs(save_dir, exist_ok=True)
 
-    model = SignalToImageCNN()
-    loss_function = nn.MSELoss()
+    model = ResNetSignalToImage()
+    # model = XformNetSignalToImage()
+    # loss_function = nn.MSELoss()
+    # loss_function = torch.nn.SmoothL1Loss().to(device)
+    loss_function = ssim_loss
+    # loss_function = CombinedLoss().to(device)
+    # loss_function = nn.MSELoss().to(device)
     # loss_function = WeightedIoULoss(pos_weight=390.0,neg_weight=1.0).to(device)
     # loss_function = nn.BCELoss(weight=torch.tensor(394.0 / 6.0)).to(device)  # For binary classification
     # loss_function = nn.MSELoss().to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     model.to(device)
     print(model)
@@ -112,6 +135,12 @@ if __name__ == "__main__":
     global_train_batch_index = 0
     global_val_batch_index = 0
 
+    transforms = v2.Compose([
+        v2.RandomHorizontalFlip(p=0.5),
+        v2.RandomVerticalFlip(p=0.5),
+        v2.RandomRotation(degrees=90)
+    ])
+
     for epoch in range(num_epochs):
 
         # Training
@@ -130,6 +159,10 @@ if __name__ == "__main__":
             # print("Softmax Output Shape:", softmax_output.shape)
             # Backward pass and optimization
             optimizer.zero_grad()
+            batch_y_pred = batch_y_pred.reshape((-1,1,64,64))
+            batch_y_true = batch_y_true.reshape((-1,1,64,64))
+            # batch_y_true = transforms(batch_y_true)
+            # print(batch_y_pred.shape)
             train_loss = loss_function(batch_y_pred, batch_y_true)
             train_loss.backward()
             optimizer.step()
@@ -185,6 +218,8 @@ if __name__ == "__main__":
                 # predicted_peak_indices = np.where(predicted_classes.cpu().numpy() == 1)
                 # print(f"val predicted indices shape = {predicted_peak_indices.shape}"
                 #       + f" true indices shape = {true_peak_indices.shape}")
+                batch_y_pred = batch_y_pred.reshape((-1,1,64,64))
+                batch_y_true = batch_y_true.reshape((-1,1,64,64))
                 validation_loss = loss_function(batch_y_pred, batch_y_true).item()
                 writer.add_scalar("loss/validation", validation_loss, int(global_val_batch_index))
                 dataset_validation_loss += validation_loss
@@ -211,7 +246,7 @@ if __name__ == "__main__":
         # f"Train MRPD: {avg_epoch_mrpd:.4f}% Val MRPD: {avg_val_mrpd:.4f}%")
 
         # Save weights every 100 epochs
-        if (epoch + 1) % 15 == 0:
+        if (epoch + 1) % 100 == 0:
             checkpoint_path = os.path.join(save_dir, f"model_{current_time}_epoch_{epoch + 1}.pth")
             torch.save(model.state_dict(), checkpoint_path)
             print(f"Checkpoint saved at {checkpoint_path}")
